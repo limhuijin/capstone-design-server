@@ -9,7 +9,7 @@ import base64
 load_dotenv()
 
 app = FastAPI()
-openai = OpenAI()
+client = OpenAI()
 
 origins = [
     "http://localhost:5173",
@@ -25,7 +25,7 @@ app.add_middleware(
 )
 
 # OpenAI 설정
-openai.api_key = os.getenv("OPENAI_API_KEY")
+client.api_key = os.getenv("OPENAI_API_KEY")
 UPLOAD_DIRECTORY = "./images"
 
 def encode_image(image_path):
@@ -41,7 +41,7 @@ def detect_story_with_chatgpt(image_path):
     )
 
     try:
-        response = openai.chat.completions.create(
+        response = client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{
                         "role": "user",
@@ -62,25 +62,26 @@ def detect_story_with_chatgpt(image_path):
         )
         return response.choices[0].message.content.strip()
 
-    except openai.error.InvalidRequestError as e:
+    except client.error.InvalidRequestError as e:
         print(f"OpenAI API 호출 오류: {e}")
         return []
 
-# 이미지 업로드 및 처리 엔드포인트
+@app.get("/")
+async def root():
+    return {"message": "Welcome to the Server!"}
+
 @app.post("/image-upload")
 async def upload_image(file: UploadFile = File(...)):
     file_location = os.path.join(UPLOAD_DIRECTORY, file.filename)
     with open(file_location, "wb") as buffer:
         buffer.write(await file.read())
 
-    # 객체 검출 수행
     try:
         story = detect_story_with_chatgpt(file_location)
-    except openai.error.InvalidRequestError as e:
+    except client.error.InvalidRequestError as e:
         return {"error": f"객체 검출 중 오류 발생: {str(e)}"}
 
     return {"filename": file.filename, "story": story}
 
-# 서버 실행
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
