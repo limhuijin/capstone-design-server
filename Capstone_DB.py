@@ -14,7 +14,8 @@ class User(Base):
     user_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     username = Column(String(50), unique=True, nullable=False)
     name = Column(String(50), nullable=False)
-    password = Column(String(128), nullable=False)
+    password = Column(String(128), nullable=False) 
+    email = Column(String(100), unique=True, nullable=True)
     images = relationship("Image", back_populates="owner")
     stories = relationship("Story", back_populates="owner")
 

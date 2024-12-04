@@ -1,22 +1,28 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, UploadFile, HTTPException
+from sqlalchemy.orm import Session
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
+from pydantic import BaseModel, EmailStr
+from typing import Optional
 import os
+import sys
+import base64
 from dotenv import load_dotenv
 import uvicorn
-import base64
-from fastapi import FastAPI
-import uvicorn
-import sys
 
-from openai import OpenAI
-from Capstone_DB import init_db, SessionLocal, Story, Image,ImageInfo  # Capstone_DB 모듈에서 init_db 함수 가져오기
+from Capstone_DB import init_db, SessionLocal, Story, Image, ImageInfo, User  # Capstone_DB 모듈에서 필요한 클래스 및 함수 가져오기
 
+#경로 설정
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv()
+UPLOAD_DIRECTORY = "C:/project/capstone-design-server/images/"
 
+#FastAPI 초기화
 app = FastAPI()
 client = OpenAI()
+# OpenAI 설정
+client.api_key = os.getenv("OPENAI_API_KEY")
+
 
 origins = [
     "http://localhost:5173",
@@ -33,10 +39,8 @@ app.add_middleware(
 @app.on_event("startup")
 def startup_event():
     init_db()
-# OpenAI 설정
-client.api_key = os.getenv("OPENAI_API_KEY")
 
-UPLOAD_DIRECTORY = "C:/Users/송진우/Desktop/capstone-design-server/images/"
+
 
 def encode_image(image_path):
     with open(image_path, "rb") as image_file:
@@ -77,7 +81,34 @@ def detect_story_with_chatgpt(image_path):
     except client.error.InvalidRequestError as e:
         print(f"OpenAI API 호출 오류: {e}")
         return []
-    
+
+# Pydantic 모델
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class UserCreate(BaseModel):
+    username: str
+    name: str
+    password: str
+    email: Optional[EmailStr] = None
+
+#아이디 중복체크
+class CheckDuplicateRequest(BaseModel):
+    username: str
+
+class CheckDuplicateResponse(BaseModel):
+    exists: bool
+
+
+#DB 종속성 체크
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
 def save_story(filename: str, story_name: str, story_content: str, image_id: int, user_id: int = 1):
     db = SessionLocal()
     story = Story(
@@ -116,6 +147,38 @@ def save_image(file: UploadFile, user_id: int = 1) -> int:
     image_id = image.image_id
     db.close()
     return image_id
+
+
+#API 엔드포인트
+@app.post("/check-duplicate", response_model=CheckDuplicateResponse)
+def check_duplicate(request: CheckDuplicateRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    return {"exists": bool(user)}
+
+@app.post("/login")
+def login(request: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == request.username).first()
+    if not user or user.password != request.password:
+        raise HTTPException(status_code=400, detail="아이디 또는 비밀번호가 잘못되었습니다.")
+    
+    return {"user_id": user.user_id, "name": user.name}
+
+@app.post("/signup")
+def signup(user: UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter(User.username == user.username).first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="Username already registered")
+    
+    new_user = User(
+        username=user.username,
+        name=user.name,
+        password=user.password,
+        email=user.email
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"user_id": new_user.user_id}
 
 @app.get("/")
 async def root():
